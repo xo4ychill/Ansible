@@ -1,5 +1,30 @@
 # Домашнее задание к занятию 1 «Введение в Ansible»
 
+## Структура проекта
+
+hw01/
+├── docker
+│   └── docker-compose.yml
+├── images
+├── playbook
+│   ├── group_vars
+│   │   ├── all
+│   │   │   └── examp.yml
+│   │   ├── deb
+│   │   │   └── examp.yml
+│   │   ├── el
+│   │   │   └── examp.yml
+│   │   └── fedora
+│   │       └── examp.yml
+│   ├── inventory
+│   │   ├── prod.yml
+│   │   └── test.yml
+│   └── site.yml
+├── README.md
+└── scripts
+    └── run_lab.sh
+
+
 ## Ответы на задания
 
 ### 1. Запуск playbook на test.yml
