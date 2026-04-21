@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  fedora:
+    image: pycontribs/fedora:latest
+    container_name: fedora
+    entrypoint: ["/bin/bash"]
+    command: ["-c", "sleep 86400 && exit"]
+    tty: true
+    stdin_open: true
+
+  centos:
+    image: pycontribs/centos:7
+    container_name: centos7
+    entrypoint: ["/bin/bash"]
+    command: ["-c", "sleep 86400 && exit"]
+    tty: true
+    stdin_open: true
+
+  ubuntu:
+    image: pycontribs/ubuntu:latest
+    container_name: ubuntu
+    entrypoint: ["/bin/bash"]
+    command: ["-c", "sleep 86400 && exit"]
+    tty: true
+    stdin_open: true
