@@ -1,0 +1,67 @@
+# =============================================================================
+# inventory.yml – Production inventory
+#
+# Назначение:
+#   - разделение ClickHouse и Vector по группам
+#   - корректные Python интерпретаторы
+#   - безопасная SSH конфигурация
+# =============================================================================
+
+all:
+  children:
+
+    # ======================================================================
+    # CLICKHOUSE (CentOS 7)
+    # ======================================================================
+    clickhouse:
+      hosts:
+        centos7:
+          ansible_host: 192.168.100.3
+
+          # Python interpreter для CentOS 7
+          # важно: предотвращает ошибки ansible.module_utils
+          ansible_python_interpreter: /usr/bin/python3
+
+          # используется для raw bootstrap + yum
+          ansible_connection: ssh
+
+      vars:
+        ansible_user: go
+        ansible_become: true
+        ansible_ssh_private_key_file: ~/.ssh/id_rsa
+
+
+    # ======================================================================
+    # VECTOR (Ubuntu)
+    # ======================================================================
+    vector:
+      hosts:
+        ubuntu:
+          ansible_host: 192.168.100.5
+
+          # Ubuntu 22/24 использует python3 по умолчанию
+          ansible_python_interpreter: /usr/bin/python3
+
+          ansible_connection: ssh
+
+      vars:
+        ansible_user: go
+        ansible_become: true
+        ansible_ssh_private_key_file: ~/.ssh/id_rsa
+
+
+  # ========================================================================
+  # GLOBAL VARIABLES (fallback)
+  # ========================================================================
+  vars:
+    # безопасный default user (можно переопределить в группе)
+    ansible_user: go
+
+    # включаем privilege escalation по умолчанию
+    ansible_become: true
+
+    # ключ SSH
+    ansible_ssh_private_key_file: ~/.ssh/id_rsa
+
+    # отключаем strict host key checking (удобно для lab/dev)
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=no"

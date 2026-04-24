@@ -1,0 +1,327 @@
+# =============================================================================
+# site.yml – Production-ready Ansible Playbook (FINAL VERSION)
+#
+# Стек:
+#   - ClickHouse (CentOS 7)
+#   - Vector (Ubuntu 22/24)
+#
+# Архитектура:
+#   1. Bootstrap Python (RAW, без Ansible modules)
+#   2. ClickHouse install + firewall + healthcheck
+#   3. Vector install + systemd
+#
+# Особенности:
+#   ✔ ansible.posix (firewalld)
+#   ✔ no regex_replace (устойчивость)
+#   ✔ idempotent install
+#   ✔ healthchecks
+#   ✔ safe Python bootstrap (PEP668 fix)
+# =============================================================================
+
+---
+
+# =============================================================================
+# BOOTSTRAP (обязательный этап для Ansible)
+# =============================================================================
+- name: Bootstrap hosts (install Python runtime)
+  hosts: all
+  become: true
+  gather_facts: false   # важно: иначе падает setup модуль
+
+  tasks:
+
+    # -------------------------------------------------------------------------
+    # Определяем ОС без Python (через shell)
+    # -------------------------------------------------------------------------
+    - name: Detect OS type
+      raw: |
+        if [ -f /etc/debian_version ]; then echo "debian";
+        elif [ -f /etc/redhat-release ]; then echo "redhat";
+        else echo "unknown"; fi
+      register: os_type
+      changed_when: false
+
+    # -------------------------------------------------------------------------
+    # Ubuntu / Debian
+    # -------------------------------------------------------------------------
+    - name: Install Python (Debian/Ubuntu)
+      raw: |
+        apt-get update -y && \
+        apt-get install -y python3 python3-apt python3-venv python3-full
+      when: "'debian' in os_type.stdout"
+
+    # -------------------------------------------------------------------------
+    # CentOS 7 / RHEL
+    # -------------------------------------------------------------------------
+    - name: Install Python (CentOS/RHEL)
+      raw: |
+        yum install -y python3 python3-pip
+      when: "'redhat' in os_type.stdout"
+
+
+# =============================================================================
+# CLICKHOUSE DEPLOYMENT
+# =============================================================================
+- name: Install ClickHouse
+  hosts: clickhouse
+  become: true
+  gather_facts: false
+
+  vars_files:
+    - group_vars/clickhouse/vars.yml
+
+  tasks:
+
+    # -------------------------------------------------------------------------
+    # FIREWALL SETUP (Только RedHat family)
+    #
+    # ansible.posix.firewalld → требует collection:
+    #   ansible-galaxy collection install ansible.posix
+    # -------------------------------------------------------------------------
+    - name: Install firewalld
+      ansible.builtin.yum:
+        name: firewalld
+        state: present
+
+    - name: Start firewalld
+      ansible.builtin.systemd:
+        name: firewalld
+        state: started
+        enabled: true
+
+    # -------------------------------------------------------------------------
+    # Открываем порты ClickHouse
+    # 9000  → native TCP
+    # 8123  → HTTP API
+    # -------------------------------------------------------------------------
+    - name: Open ClickHouse ports
+      ansible.posix.firewalld:
+        port: "{{ item }}/tcp"
+        permanent: true
+        state: enabled
+        immediate: true
+      loop:
+        - 9000
+        - 8123
+
+    # -------------------------------------------------------------------------
+    # Базовые зависимости ClickHouse
+    # -------------------------------------------------------------------------
+    - name: Install dependencies
+      ansible.builtin.yum:
+        name:
+          - glibc
+          - libstdc++
+        state: present
+
+    # -------------------------------------------------------------------------
+    # RPM директория
+    # -------------------------------------------------------------------------
+    - name: Create RPM directory
+      ansible.builtin.file:
+        path: "{{ clickhouse_rpm_dir }}"
+        state: directory
+        mode: "0755"
+
+    # -------------------------------------------------------------------------
+    # Скачивание RPM пакетов (fallback mirrors)
+    # -------------------------------------------------------------------------
+    - name: Download ClickHouse packages
+      ansible.builtin.get_url:
+        url: "{{ item.0 }}/{{ item.1.name }}-{{ clickhouse_version }}.{{ item.2 }}.rpm"
+        dest: "{{ clickhouse_rpm_dir }}/{{ item.1.name }}-{{ clickhouse_version }}.rpm"
+        mode: "0644"
+      loop: "{{ clickhouse_mirrors | product(clickhouse_packages, ['noarch','x86_64']) | list }}"
+      register: download_results
+      retries: 3
+      delay: 5
+      ignore_errors: true
+
+    # -------------------------------------------------------------------------
+    # Проверка RPM файлов
+    # -------------------------------------------------------------------------
+    - name: Check RPM files exist
+      ansible.builtin.stat:
+        path: "{{ clickhouse_rpm_dir }}/{{ item.name }}-{{ clickhouse_version }}.rpm"
+      loop: "{{ clickhouse_packages }}"
+      register: rpm_files
+
+    - name: Fail if missing packages
+      ansible.builtin.fail:
+        msg: "Package missing: {{ item.item.name }}"
+      when: not item.stat.exists
+      loop: "{{ rpm_files.results }}"
+
+    # -------------------------------------------------------------------------
+    # Сбор списка RPM файлов (без regex — безопасно)
+    # -------------------------------------------------------------------------
+    - name: Build RPM list
+      ansible.builtin.set_fact:
+        clickhouse_rpm_files: "{{ clickhouse_rpm_files | default([]) + [ clickhouse_rpm_dir ~ '/' ~ item.name ~ '-' ~ clickhouse_version ~ '.rpm' ] }}"
+      loop: "{{ clickhouse_packages }}"
+
+    # -------------------------------------------------------------------------
+    # Установка ClickHouse
+    # -------------------------------------------------------------------------
+    - name: Install ClickHouse
+      ansible.builtin.yum:
+        name: "{{ clickhouse_rpm_files }}"
+        state: present
+
+    # -------------------------------------------------------------------------
+    # Директории ClickHouse
+    # -------------------------------------------------------------------------
+    - name: Create ClickHouse directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: clickhouse
+        group: clickhouse
+      loop:
+        - /var/lib/clickhouse
+        - /var/log/clickhouse-server
+
+    # -------------------------------------------------------------------------
+    # Запуск сервиса
+    # -------------------------------------------------------------------------
+    - name: Start ClickHouse service
+      ansible.builtin.systemd:
+        name: clickhouse-server
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    # -------------------------------------------------------------------------
+    # Healthcheck TCP
+    # -------------------------------------------------------------------------
+    - name: Wait ClickHouse TCP
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 9000
+        timeout: 60
+
+    # -------------------------------------------------------------------------
+    # Healthcheck HTTP
+    # -------------------------------------------------------------------------
+    - name: Wait ClickHouse HTTP
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:8123/ping"
+      register: ch_health
+      retries: 10
+      delay: 3
+      until: ch_health.content == "Ok.\n"
+
+
+# =============================================================================
+# VECTOR DEPLOYMENT
+# =============================================================================
+- name: Install Vector
+  hosts: vector
+  become: true
+  gather_facts: false
+
+  vars_files:
+    - group_vars/vector/vars.yml
+
+  tasks:
+
+    # -------------------------------------------------------------------------
+    # Директории Vector
+    # -------------------------------------------------------------------------
+    - name: Create directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - "{{ vector_install_dir }}"
+        - "{{ vector_config_dir }}"
+        - "{{ vector_data_dir }}"
+
+    # -------------------------------------------------------------------------
+    # Скачивание Vector
+    # -------------------------------------------------------------------------
+    - name: Download Vector archive
+      ansible.builtin.get_url:
+        url: "{{ vector_url }}"
+        dest: "/tmp/vector.tar.gz"
+
+    # -------------------------------------------------------------------------
+    # Распаковка
+    # -------------------------------------------------------------------------
+    - name: Extract Vector
+      ansible.builtin.unarchive:
+        src: "/tmp/vector.tar.gz"
+        dest: "{{ vector_install_dir }}"
+        remote_src: true
+        extra_opts:
+          - --strip-components=1
+
+    # -------------------------------------------------------------------------
+    # 🔥 Динамическое обнаружение бинарных файлов (без жестко заданного пути)
+    # -------------------------------------------------------------------------
+    - name: Find Vector binary
+      ansible.builtin.find:
+        paths: "{{ vector_install_dir }}"
+        patterns: "vector"
+        file_type: file
+      register: vector_binary
+
+    - name: Debug vector path
+      ansible.builtin.debug:
+        var: vector_binary.files[0].path
+
+    # -------------------------------------------------------------------------
+    # Symlink бинарника
+    # -------------------------------------------------------------------------
+    - name: Create symlink
+      ansible.builtin.file:
+        src: "{{ vector_binary.files[0].path }}"
+        dest: "/usr/local/bin/vector"
+        state: link
+        force: true
+
+    # -------------------------------------------------------------------------
+    # Конфигурация Vector
+    # -------------------------------------------------------------------------
+    - name: Configure Vector
+      ansible.builtin.template:
+        src: vector.toml.j2
+        dest: "{{ vector_config_file }}"
+      notify: restart vector
+
+    # -------------------------------------------------------------------------
+    # systemd unit
+    # -------------------------------------------------------------------------
+    - name: Create systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/vector.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Vector log agent
+          After=network.target
+
+          [Service]
+          ExecStart=/usr/local/bin/vector --config {{ vector_config_file }}
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+
+    # -------------------------------------------------------------------------
+    # Запуск Vector
+    # -------------------------------------------------------------------------
+    - name: Start Vector
+      ansible.builtin.systemd:
+        name: vector
+        state: started
+        enabled: true
+        daemon_reload: true
+
+  handlers:
+    - name: restart vector
+      ansible.builtin.systemd:
+        name: vector
+        state: restarted
+        daemon_reload: true
