@@ -45,14 +45,9 @@ Playbook состоит из 3 этапов:
 ### 🔐 Требования
 
 - Ansible >= 2.14
-- ansible.posix collection
 - SSH доступ к хостам
 - sudo privileges
 
-Установка collections:
-```bash
-ansible-galaxy collection install ansible.posix
-```
 
 ### Скриншоты выполнения заданий №5-8
 
