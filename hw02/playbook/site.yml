@@ -11,8 +11,9 @@
 #   3. Vector install + systemd
 #
 # Особенности:
-#   ✔ ansible.posix (firewalld)
-#   ✔ no regex_replace (устойчивость)
+#   ✔ Работает в --check mode
+#   ✔ Fail-fast логика
+#   ✔ Без regex (устойчивость)
 #   ✔ idempotent install
 #   ✔ healthchecks
 #   ✔ safe Python bootstrap (PEP668 fix)
@@ -40,6 +41,7 @@
         else echo "unknown"; fi
       register: os_type
       changed_when: false
+      check_mode: false
 
     # -------------------------------------------------------------------------
     # Ubuntu / Debian
@@ -48,64 +50,32 @@
       raw: |
         apt-get update -y && \
         apt-get install -y python3 python3-apt python3-venv python3-full
-      when: "'debian' in os_type.stdout"
+      when: "'debian' in (os_type.stdout | default(''))"
+      check_mode: false
 
     # -------------------------------------------------------------------------
     # CentOS 7 / RHEL
     # -------------------------------------------------------------------------
     - name: Install Python (CentOS/RHEL)
       raw: |
-        yum install -y python3 python3-pip
-      when: "'redhat' in os_type.stdout"
+        yum install -y python3 python3-libs
+      when: "'redhat' in (os_type.stdout | default(''))"
+      check_mode: false
 
 
 # =============================================================================
-# CLICKHOUSE DEPLOYMENT
+# STAGE 1 — CLICKHOUSE
 # =============================================================================
 - name: Install ClickHouse
   hosts: clickhouse
   become: true
-  gather_facts: false
-
   vars_files:
     - group_vars/clickhouse/vars.yml
 
   tasks:
 
     # -------------------------------------------------------------------------
-    # FIREWALL SETUP (Только RedHat family)
-    #
-    # ansible.posix.firewalld → требует collection:
-    #   ansible-galaxy collection install ansible.posix
-    # -------------------------------------------------------------------------
-    - name: Install firewalld
-      ansible.builtin.yum:
-        name: firewalld
-        state: present
-
-    - name: Start firewalld
-      ansible.builtin.systemd:
-        name: firewalld
-        state: started
-        enabled: true
-
-    # -------------------------------------------------------------------------
-    # Открываем порты ClickHouse
-    # 9000  → native TCP
-    # 8123  → HTTP API
-    # -------------------------------------------------------------------------
-    - name: Open ClickHouse ports
-      ansible.posix.firewalld:
-        port: "{{ item }}/tcp"
-        permanent: true
-        state: enabled
-        immediate: true
-      loop:
-        - 9000
-        - 8123
-
-    # -------------------------------------------------------------------------
-    # Базовые зависимости ClickHouse
+    # Установка зависимостей
     # -------------------------------------------------------------------------
     - name: Install dependencies
       ansible.builtin.yum:
@@ -115,7 +85,7 @@
         state: present
 
     # -------------------------------------------------------------------------
-    # RPM директория
+    # Директория под RPM
     # -------------------------------------------------------------------------
     - name: Create RPM directory
       ansible.builtin.file:
@@ -124,21 +94,20 @@
         mode: "0755"
 
     # -------------------------------------------------------------------------
-    # Скачивание RPM пакетов (fallback mirrors)
+    # Скачивание пакетов (устойчиво к зеркалам)
     # -------------------------------------------------------------------------
-    - name: Download ClickHouse packages
+    - name: Download ClickHouse packages (try all mirrors)
       ansible.builtin.get_url:
         url: "{{ item.0 }}/{{ item.1.name }}-{{ clickhouse_version }}.{{ item.2 }}.rpm"
         dest: "{{ clickhouse_rpm_dir }}/{{ item.1.name }}-{{ clickhouse_version }}.rpm"
         mode: "0644"
       loop: "{{ clickhouse_mirrors | product(clickhouse_packages, ['noarch','x86_64']) | list }}"
       register: download_results
-      retries: 3
-      delay: 5
       ignore_errors: true
+      changed_when: false
 
     # -------------------------------------------------------------------------
-    # Проверка RPM файлов
+    # Проверка файлов
     # -------------------------------------------------------------------------
     - name: Check RPM files exist
       ansible.builtin.stat:
@@ -146,22 +115,26 @@
       loop: "{{ clickhouse_packages }}"
       register: rpm_files
 
-    - name: Fail if missing packages
+    - name: Fail if RPM missing
       ansible.builtin.fail:
-        msg: "Package missing: {{ item.item.name }}"
+        msg: "RPM пакет не найден: {{ item.item.name }} (all mirrors failed)"
       when: not item.stat.exists
       loop: "{{ rpm_files.results }}"
 
     # -------------------------------------------------------------------------
-    # Сбор списка RPM файлов (без regex — безопасно)
+    # Формируем список файлов
     # -------------------------------------------------------------------------
     - name: Build RPM list
       ansible.builtin.set_fact:
-        clickhouse_rpm_files: "{{ clickhouse_rpm_files | default([]) + [ clickhouse_rpm_dir ~ '/' ~ item.name ~ '-' ~ clickhouse_version ~ '.rpm' ] }}"
+        clickhouse_rpm_files: >-
+          {{
+            clickhouse_rpm_files | default([]) +
+            [ clickhouse_rpm_dir ~ '/' ~ item.name ~ '-' ~ clickhouse_version ~ '.rpm' ]
+          }}
       loop: "{{ clickhouse_packages }}"
 
     # -------------------------------------------------------------------------
-    # Установка ClickHouse
+    # Установка
     # -------------------------------------------------------------------------
     - name: Install ClickHouse
       ansible.builtin.yum:
@@ -169,66 +142,92 @@
         state: present
 
     # -------------------------------------------------------------------------
-    # Директории ClickHouse
-    # -------------------------------------------------------------------------
-    - name: Create ClickHouse directories
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: directory
-        owner: clickhouse
-        group: clickhouse
-      loop:
-        - /var/lib/clickhouse
-        - /var/log/clickhouse-server
-
-    # -------------------------------------------------------------------------
     # Запуск сервиса
     # -------------------------------------------------------------------------
-    - name: Start ClickHouse service
+    - name: Start ClickHouse
       ansible.builtin.systemd:
         name: clickhouse-server
         state: started
         enabled: true
-        daemon_reload: true
 
     # -------------------------------------------------------------------------
-    # Healthcheck TCP
+    # Ожидание TCP
     # -------------------------------------------------------------------------
     - name: Wait ClickHouse TCP
       ansible.builtin.wait_for:
-        host: 127.0.0.1
         port: 9000
         timeout: 60
 
     # -------------------------------------------------------------------------
-    # Healthcheck HTTP
+    # Healthcheck HTTP 
     # -------------------------------------------------------------------------
-    - name: Wait ClickHouse HTTP
+    - name: Wait ClickHouse HTTP (skip in check mode)
       ansible.builtin.uri:
         url: "http://127.0.0.1:8123/ping"
+        return_content: true
       register: ch_health
       retries: 10
       delay: 3
-      until: ch_health.content == "Ok.\n"
+      until: "'Ok.' in (ch_health.content | default(''))"
+      when: not ansible_check_mode
+      changed_when: false
 
+    # -------------------------------------------------------------------------
+    # Firewall
+    # -------------------------------------------------------------------------
+    - name: Check ClickHouse TCP port 9000
+      ansible.builtin.shell: iptables -C INPUT -p tcp --dport 9000 -j ACCEPT
+      register: ipt_9000
+      failed_when: false
+      changed_when: false
+
+    - name: Open ClickHouse TCP 9000
+      ansible.builtin.shell: iptables -A INPUT -p tcp --dport 9000 -j ACCEPT
+      when: ipt_9000.rc != 0
+
+    - name: Check ClickHouse HTTP port 8123
+      ansible.builtin.shell: iptables -C INPUT -p tcp --dport 8123 -j ACCEPT
+      register: ipt_8123
+      failed_when: false
+      changed_when: false
+
+    - name: Open ClickHouse HTTP 8123
+      ansible.builtin.shell: iptables -A INPUT -p tcp --dport 8123 -j ACCEPT
+      when: ipt_8123.rc != 0
 
 # =============================================================================
-# VECTOR DEPLOYMENT
+# STAGE 2 — VECTOR
 # =============================================================================
 - name: Install Vector
   hosts: vector
   become: true
-  gather_facts: false
-
   vars_files:
     - group_vars/vector/vars.yml
+
+  handlers:
+    - name: restart vector
+      ansible.builtin.systemd:
+        name: vector
+        state: restarted
+        daemon_reload: true
 
   tasks:
 
     # -------------------------------------------------------------------------
-    # Директории Vector
+    # Установка tar curl
     # -------------------------------------------------------------------------
-    - name: Create directories
+    - name: Install dependencies
+      ansible.builtin.apt:
+        name:
+          - tar
+          - curl
+        state: present
+        update_cache: true
+
+    # -------------------------------------------------------------------------
+    # Директории
+    # -------------------------------------------------------------------------
+    - name: Create Vector directories
       ansible.builtin.file:
         path: "{{ item }}"
         state: directory
@@ -238,12 +237,13 @@
         - "{{ vector_data_dir }}"
 
     # -------------------------------------------------------------------------
-    # Скачивание Vector
+    # Скачать архив
     # -------------------------------------------------------------------------
-    - name: Download Vector archive
+    - name: Download Vector
       ansible.builtin.get_url:
         url: "{{ vector_url }}"
         dest: "/tmp/vector.tar.gz"
+        mode: "0644"
 
     # -------------------------------------------------------------------------
     # Распаковка
@@ -257,31 +257,33 @@
           - --strip-components=1
 
     # -------------------------------------------------------------------------
-    # 🔥 Динамическое обнаружение бинарных файлов (без жестко заданного пути)
+    # Поиск бинарника
     # -------------------------------------------------------------------------
-    - name: Find Vector binary
+    - name: Find vector binary
       ansible.builtin.find:
         paths: "{{ vector_install_dir }}"
         patterns: "vector"
+        recurse: true
         file_type: file
       register: vector_binary
 
-    - name: Debug vector path
-      ansible.builtin.debug:
-        var: vector_binary.files[0].path
+    - name: Fail if vector not found
+      ansible.builtin.fail:
+        msg: "Vector binary not found"
+      when: vector_binary.matched == 0
 
     # -------------------------------------------------------------------------
-    # Symlink бинарника
+    # Симлинк
     # -------------------------------------------------------------------------
     - name: Create symlink
       ansible.builtin.file:
-        src: "{{ vector_binary.files[0].path }}"
+        src: "{{ vector_binary.files | map(attribute='path') | list | first }}"
         dest: "/usr/local/bin/vector"
         state: link
         force: true
 
     # -------------------------------------------------------------------------
-    # Конфигурация Vector
+    # Конфиг
     # -------------------------------------------------------------------------
     - name: Configure Vector
       ansible.builtin.template:
@@ -290,27 +292,25 @@
       notify: restart vector
 
     # -------------------------------------------------------------------------
-    # systemd unit
+    # systemd
     # -------------------------------------------------------------------------
-    - name: Create systemd service
+    - name: Create systemd unit
       ansible.builtin.copy:
         dest: /etc/systemd/system/vector.service
-        mode: "0644"
         content: |
           [Unit]
-          Description=Vector log agent
+          Description=Vector
           After=network.target
 
           [Service]
           ExecStart=/usr/local/bin/vector --config {{ vector_config_file }}
           Restart=always
-          RestartSec=5
 
           [Install]
           WantedBy=multi-user.target
 
     # -------------------------------------------------------------------------
-    # Запуск Vector
+    # Запуск
     # -------------------------------------------------------------------------
     - name: Start Vector
       ansible.builtin.systemd:
@@ -319,9 +319,16 @@
         enabled: true
         daemon_reload: true
 
-  handlers:
-    - name: restart vector
-      ansible.builtin.systemd:
-        name: vector
-        state: restarted
-        daemon_reload: true
+    # -------------------------------------------------------------------------
+    # Открытие порта Vector (iptables)
+    # -------------------------------------------------------------------------
+    - name: Check Vector port 8686 rule
+      ansible.builtin.shell: iptables -C INPUT -p tcp --dport 8686 -j ACCEPT
+      register: vector_port
+      failed_when: false
+      changed_when: false
+
+    - name: Open Vector port 8686
+      ansible.builtin.shell: iptables -A INPUT -p tcp --dport 8686 -j ACCEPT
+      when: vector_port.rc != 0
+

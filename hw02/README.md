@@ -42,7 +42,7 @@ Playbook состоит из 3 этапов:
 
 ---
 
-## 🔐 Требования
+### 🔐 Требования
 
 - Ansible >= 2.14
 - ansible.posix collection
@@ -53,3 +53,22 @@ Playbook состоит из 3 этапов:
 ```bash
 ansible-galaxy collection install ansible.posix
 ```
+
+### Скриншоты выполнения заданий №5-8
+
+5. ```ansible-lint site.yml```
+![alt text](images/5.png)
+
+6. ```ansible-playbook -i inventory/prod.yml site.yml --check```
+![alt text](images/6.png)
+![alt text](images/6.1.png)
+![alt text](images/6.2.png)
+
+7. ```ansible-playbook -i inventory/prod.yml site.yml --diff```
+![alt text](images/7.png)
+![alt text](images/7.1.png)
+![alt text](images/7.2.png)
+![alt text](images/7.3.png)
+
+8. ```ansible-playbook -i inventory/prod.yml site.yml --diff```
+![alt text](images/8.png)
