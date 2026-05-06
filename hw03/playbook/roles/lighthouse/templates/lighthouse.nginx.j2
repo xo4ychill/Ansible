@@ -2,18 +2,20 @@
 # Nginx configuration for Lighthouse
 # Назначение: отдача статики, логирование, базовая HTTP-безопасность
 # =============================================================================
+# Генерируется из: roles/lighthouse/templates/lighthouse.nginx.j2
+# =============================================================================
 
 server {
-    listen {{ lighthouse_nginx_port }};
+    listen {{ lighthouse_nginx_port }} default_server;
     listen [::]:{{ lighthouse_nginx_port }} default_server;
     server_name {{ lighthouse_nginx_server_name }};
 
     root {{ lighthouse_nginx_root }};
-    index index.html;
+    index index.html index.htm;
 
-    # 📝 Логи доступа и ошибок (отдельно для этого сайта)
+    # 📝 Логи
     access_log {{ lighthouse_nginx_log_dir }}/access.log;
-    error_log {{ lighthouse_nginx_log_dir }}/error.log;
+    error_log {{ lighthouse_nginx_log_dir }}/error.log warn;
 
     # 🗂️ Отдача статики
     location / {
@@ -21,24 +23,23 @@ server {
         autoindex off;
     }
 
-    # 🔄 Проксирование API (заготовка для будущего расширения)
-    # location /api {
-    #     proxy_pass http://backend;
-    #     proxy_set_header Host $host;
-    #     proxy_set_header X-Real-IP $remote_addr;
-    # }
+    # 🗑️ Кэширование статики (опционально)
+    location ~* \.(jpg|jpeg|png|gif|ico|css|js|svg|woff2?)$ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+        access_log off;
+    }
 
-    # 🛡️ Security Headers (защита от XSS, clickjacking, MIME-sniffing)
+    # 🛡️ Security headers
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-XSS-Protection "1; mode=block" always;
-
-    # 🗑️ Скрытие версии Nginx в заголовках ответов
     server_tokens off;
 
-    # 🗑️ Отключить логи для статики (опционально)
-    # location ~* \.(jpg|jpeg|png|gif|ico|css|js)$ {
-    #     access_log off;
-    #     expires 30d;
-    # }
+    # 🚫 Запрет доступа к скрытым файлам
+    location ~ /\. {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
 }

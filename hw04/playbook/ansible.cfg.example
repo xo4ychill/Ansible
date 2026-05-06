@@ -1,0 +1,81 @@
+# =============================================================================
+# ansible.cfg – Глобальная конфигурация Ansible
+# Назначение: централизованное управление поведением Ansible, оптимизация SSH
+#             и настройка безопасности для production-среды
+# =============================================================================
+
+[defaults]
+# 📁 Пути к ресурсам проекта
+
+# Путь к файлу инвентаря
+inventory = ./inventory/prod.yml
+# Директория с ролями
+roles_path = ./roles
+# Кастомные модули (если есть)
+library = ./library
+# Пользовательские Jinja2-фильтры
+filter_plugins = ./filter_plugins
+
+# 🔄 Управление выполнением плейбуков
+
+# Отключаем интерактивный запрос (в prod лучше через ssh_config)
+host_key_checking = False
+# Отключаем создание .retry файлов (мусор)
+retry_files_enabled = False
+# Кэшируем факты, собираем только при необходимости
+gathering = smart
+# Тип кэша фактов
+fact_caching = jsonfile
+# Путь к кэшу
+fact_caching_connection = /tmp/ansible_facts
+# Время жизни кэша в секундах (1 час)
+fact_caching_timeout = 3600
+
+# 📝 Вывод и логирование
+
+stdout_callback = default
+# Читаемый YAML-вывод вместо стандартного
+# stdout_callback = yaml
+
+# Включает каллбэки для бинарного вывода
+bin_ansible_callbacks = True
+# Не показываем пропущенные задачи (чистый лог)
+display_skipped_hosts = false
+# Показываем успешно выполненные
+display_ok_hosts = true
+
+# 🚀 Производительность
+
+# Параллельное выполнение на 10 хостах
+forks = 10
+# Таймаут SSH-соединения в секундах
+timeout = 30
+# Последовательное выполнение задач (предсказуемо)
+strategy = linear
+
+# 🔐 Интеграция с Ansible Vault (раскомментируйте только когда создадите vault-файлы)
+
+# Скрипт для ввода пароля Vault
+# vault_identity_list = default@~/.ssh/ask_vault_pass.sh
+
+[privilege_escalation]
+# ⬆️ Настройки привилегированного доступа (sudo)
+
+# По умолчанию использовать sudo
+become = true
+# Метод escalation
+become_method = sudo
+# Под кем выполнять задачи
+become_user = root
+# Не запрашивать пароль sudo (используем NOPASSWD или key)
+become_ask_pass = false
+
+[ssh_connection]
+# 🌐 Оптимизация SSH-соединения
+
+# Ускоряет выполнение в 2-3x (отключает временные скрипты)
+pipelining = true
+# Шаблон для мультиплексирования
+control_path = /tmp/ansible-ssh-%%h-%%p-%%r
+# Сохранение сессий и keepalive
+ssh_args = -o ControlMaster=auto -o ControlPersist=60s -o ServerAliveInterval=30
