@@ -1,0 +1,49 @@
+# =============================================================================
+# site.yml – Главный orchestrator-плейбук
+# Назначение: последовательный запуск ролей в правильном порядке:
+# 1. Bootstrap Python (без этого Ansible не сможет работать)
+# 2. System tuning (swap, OOM, лимиты памяти)
+# 3. Компоненты (ClickHouse → Vector → Lighthouse)
+# =============================================================================
+
+- name: 🔄 Bootstrap Python on all hosts
+  hosts: all
+  become: true                     # Выполняем от root
+  gather_facts: false              # Не собираем факты (Python ещё нет)
+  # 🚨 В production остановка при первой ошибке критична
+  any_errors_fatal: "{{ environment_name in ['prod', 'production'] }}"
+  roles:
+    - role: bootstrap
+      tags: [bootstrap, always]    # always = запускать всегда, даже при фильтрации тегов
+
+- name: 🧠 System tuning for low-memory VMs
+  hosts: all
+  become: true
+  gather_facts: true               # Нужны ansible_memtotal_mb, ansible_swaptotal_mb
+  roles:
+    - role: system_tuning
+      tags: [tuning, system]
+
+- name: 🗄️ Deploy ClickHouse
+  hosts: clickhouse
+  become: true
+  gather_facts: true               # Для ansible_os_family (Debian/RedHat)
+  roles:
+    - role: clickhouse
+      tags: [clickhouse, db]
+
+- name: 📤 Deploy Vector agent
+  hosts: vector
+  become: true
+  gather_facts: true
+  roles:
+    - role: vector
+      tags: [vector, agent]
+
+- name: 🌐 Deploy Lighthouse UI
+  hosts: lighthouse
+  become: true
+  gather_facts: true
+  roles:
+    - role: lighthouse
+      tags: [lighthouse, ui]

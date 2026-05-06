@@ -1,0 +1,21 @@
+# =============================================================================
+# group_vars/lighthouse.yml – Переменные для группы Lighthouse
+# Назначение: конфигурация Nginx, пути клонирования, порты
+# =============================================================================
+
+# 📦 Пакеты для веб-сервера и контроля версий
+lighthouse_packages:
+  - nginx
+  - git
+  - curl
+
+# 🗄️ Репозиторий и целевая директория
+lighthouse_repo: "https://github.com/VKCOM/lighthouse.git"
+lighthouse_dir: "/opt/lighthouse"
+lighthouse_version: "main"  # Можно заменить на тег: "v1.0.0"
+
+# 🌐 Nginx конфигурация
+lighthouse_nginx_port: 80
+lighthouse_nginx_server_name: "_"   # Ловит все запросы по IP
+lighthouse_nginx_root: "{{ lighthouse_dir }}/web"
+lighthouse_nginx_log_dir: "/var/log/nginx/lighthouse"

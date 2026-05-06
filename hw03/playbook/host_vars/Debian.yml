@@ -1,0 +1,9 @@
+# =============================================================================
+# host_vars/Debian.yml – Хост-специфичные переменные для Lighthouse
+# =============================================================================
+
+lighthouse_host_ip: "93.77.179.231"
+
+ansible_os_family: "Debian"
+ansible_distribution: "Debian"
+ansible_distribution_version: "12"

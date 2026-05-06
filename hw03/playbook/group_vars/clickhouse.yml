@@ -1,0 +1,28 @@
+# =============================================================================
+# group_vars/clickhouse.yml – Переменные для группы ClickHouse
+# Назначение: настройка репозиториев, пакетов, healthcheck и параметров БД
+# =============================================================================
+
+# 📦 Репозитории (идемпотентные)
+clickhouse_apt_repo: "https://packages.clickhouse.com/deb"
+clickhouse_rpm_repo_url: "https://packages.clickhouse.com/rpm/clickhouse.repo"
+
+# 📦 Пакеты для установки
+clickhouse_packages:
+  - clickhouse-server
+  - clickhouse-client
+
+# 🏥 Healthcheck endpoint (локальный ping)
+clickhouse_health_url: "http://localhost:8123/ping"
+clickhouse_health_expected: "Ok.\n"
+
+# 🔐 Настройки для интеграции с Vector
+clickhouse_database: "logs"
+clickhouse_table: "events"
+# 💡 ansible_host берётся из инвентаря хоста, формат http://IP:PORT
+clickhouse_endpoint: "http://{{ ansible_host }}:8123"
+
+# ⚙️ Дополнительные параметры (можно расширить при необходимости)
+clickhouse_max_connections: 100
+clickhouse_listen_port: 8123
+clickhouse_tcp_port: 9000
