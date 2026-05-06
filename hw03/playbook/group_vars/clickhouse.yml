@@ -26,3 +26,8 @@ clickhouse_endpoint: "http://{{ ansible_host }}:8123"
 clickhouse_max_connections: 100
 clickhouse_listen_port: 8123
 clickhouse_tcp_port: 9000
+
+# 🌐 Endpoint для подключения извне
+# 💡 ansible_host подставляется автоматически из инвентаря
+clickhouse_endpoint: "http://{{ ansible_host | default('127.0.0.1') }}:8123"
+

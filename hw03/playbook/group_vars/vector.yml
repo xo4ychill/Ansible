@@ -38,9 +38,11 @@ vector_checksum: ""
 # 💡 Если группа clickhouse пуста, используется localhost fallback
 vector_clickhouse_endpoint: >-
   {{ 
-    hostvars[groups['clickhouse'][0]].clickhouse_endpoint 
-    if (groups['clickhouse'] | default([]) | length > 0) 
-    else 'http://127.0.0.1:8123' 
+    (
+      hostvars[groups['clickhouse'][0]].clickhouse_endpoint 
+      if (groups['clickhouse'] | default([]) | length > 0 and groups['clickhouse'][0] in hostvars)
+      else 'http://127.0.0.1:8123'
+    ) | trim 
   }}
 
 # 🗄️ База и таблица
