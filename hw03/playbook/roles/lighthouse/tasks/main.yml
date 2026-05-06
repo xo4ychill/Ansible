@@ -75,6 +75,20 @@
     mode: "0644"
   notify: reload nginx
 
+- name: Symlink lighthouse config
+  ansible.builtin.file:
+    src: "{{ lighthouse_dir }}/lighthouse.conf"
+    dest: /etc/nginx/sites-enabled/lighthouse.conf
+    state: link
+    force: true
+  notify: reload nginx
+
+- name: Remove default nginx site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: restart nginx
+
 - name: 🔍 Validate full Nginx configuration
   ansible.builtin.command: nginx -t
   register: _nginx_config_test
