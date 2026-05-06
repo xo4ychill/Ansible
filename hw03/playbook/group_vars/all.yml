@@ -27,7 +27,7 @@ bootstrap_python_redhat: |
   yum install -y -q python3 python3-libselinux || dnf install -y -q python3 python3-libselinux
 
 # 🧠 Параметры системного тюнинга
-tuning_low_memory_threshold_mb: 4096  # Если RAM < 4GB → включаем swap
+tuning_low_memory_threshold_mb: 2048  # Если RAM < 2GB → включаем swap
 tuning_swap_size: "2G"                # Размер swap-файла
 tuning_swappiness: 10                 # Приоритет RAM над swap (0-100)
 tuning_oom_kill_allocating_task: 1    # Убивать задачу-источник OOM, а не случайный процесс
